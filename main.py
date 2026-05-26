@@ -54,7 +54,7 @@ def main():
         except Exception as e:
             print(f"【警告】モデルファイルのロードに失敗しました（初期状態で起動します）: {e}")
 
-    # 【確定】dataset.pyが使う「training_data.csv」を裏の学習側に直接指定して繋ぐ
+    # dataset.pyが使う「training_data.csv」を裏の学習側に直接指定して繋ぐ
     train_thread = threading.Thread(
         target=background_train_loop,
         kwargs={"csv_path": "training_data.csv"},
@@ -124,6 +124,9 @@ def main():
     last_record_step = -1
     current_bar_trajectory = np.zeros((steps_per_bar, 4))
 
+    # ビジュアライズ用の現在角度保持変数（初期値は中心の90度）
+    display_angles = np.array([90.0, 90.0, 90.0, 90.0])
+
     while True:
         success, frame = hw_mgr.get_frame()
         if not success:
@@ -180,6 +183,9 @@ def main():
                 current_music_token, music_buffer, arm_angles_buffer
             )
 
+            # 画面描画用に角度数値を同期
+            display_angles = step_angles
+
             # バッファの更新
             music_buffer = np.roll(music_buffer, -1, axis=0)
             music_buffer[-1] = current_music_token
@@ -205,7 +211,7 @@ def main():
             except Exception:
                 pass
 
-            # 💡 【追加】AIがどれくらいの予測スコアで角度を選んだかコンソールに表示
+            # AIがどれくらいの予測スコアで角度を選んだかコンソールに表示
             score = float(predicted_emotions[0] + predicted_emotions[1]) if len(predicted_emotions) > 1 else float(
                 predicted_emotions[0])
             print(f"   🎯 [AI選択値] 予測感情スコア(H+S): {score:.4f} ➡️ 決定角度: {step_angles}")
@@ -223,6 +229,74 @@ def main():
                 except Exception:
                     pass
 
+        # ----------------------------------------------------
+        # 🤖 【変更】サーボ角度をアームの骨組み（棒人間風）としてリアルタイム描画
+        # ----------------------------------------------------
+        # ----------------------------------------------------
+        # 🤖 【ハの字アーム対応】2軸×2本のアーム骨組みをリアルタイム描画
+        # ----------------------------------------------------
+        h, w, _ = frame.shape
+
+        # 骨（リンク）の長さ（ピクセル単位）
+        l1, l2 = 40, 30  # 根元の骨の長さ, 先端の骨の長さ
+
+        # 1. 左アームの描画（画面右下のやや左寄り）
+        left_base_x = w - 160
+        left_base_y = h - 60
+
+        # 左サーボの角度（a1, a2）を取得
+        left_a1 = display_angles[0]
+        left_a2 = display_angles[1]
+
+        # ハの字（左下から右上へ傾く構え）を基準とするため、初期角度を135度に設定
+        left_ang1 = 135.0 + (left_a1 - 90.0)
+        left_rad1 = np.radians(left_ang1)
+        left_joint_x = int(left_base_x + l1 * np.cos(left_rad1))
+        left_joint_y = int(left_base_y - l1 * np.sin(left_rad1))  # OpenCVは下方向がYプラスのためマイナス
+
+        left_ang2 = left_ang1 + (left_a2 - 90.0)
+        left_rad2 = np.radians(left_ang2)
+        left_tip_x = int(left_joint_x + l2 * np.cos(left_rad2))
+        left_tip_y = int(left_joint_y - l2 * np.sin(left_rad2))
+
+        # 2. 右アームの描画（画面右下のやや右寄り）
+        right_base_x = w - 60
+        right_base_y = h - 60
+
+        # 右サーボの角度（a3, a4）を取得
+        right_a3 = display_angles[2]
+        right_a4 = display_angles[3]
+
+        # ハの字（右下から左上へ傾く構え）を基準とするため、初期角度を45度に設定
+        right_ang1 = 45.0 - (right_a3 - 90.0)  # 左右対称の動きにするためマイナス反転
+        right_rad1 = np.radians(right_ang1)
+        right_joint_x = int(right_base_x - l1 * np.cos(right_rad1))
+        right_joint_y = int(right_base_y - l1 * np.sin(right_rad1))
+
+        right_ang2 = right_ang1 - (right_a4 - 90.0)
+        right_rad2 = np.radians(right_ang2)
+        right_tip_x = int(right_joint_x - l2 * np.cos(right_rad2))
+        right_tip_y = int(right_joint_y - l2 * np.sin(right_rad2))
+
+        # --- OpenCV画面への描画処理 ---
+        # 土台（マウントベース）をグレーの線で結ぶ
+        cv2.line(frame, (left_base_x, left_base_y), (right_base_x, right_base_y), (100, 100, 100), 2)
+        cv2.circle(frame, (left_base_x, left_base_y), 6, (100, 100, 100), -1)
+        cv2.circle(frame, (right_base_x, right_base_y), 6, (100, 100, 100), -1)
+
+        # 左アームの描画（骨：黄緑、関節：赤、先端：オレンジ）
+        cv2.line(frame, (left_base_x, left_base_y), (left_joint_x, left_joint_y), (0, 255, 150), 3)
+        cv2.line(frame, (left_joint_x, left_joint_y), (left_tip_x, left_tip_y), (0, 255, 150), 3)
+        cv2.circle(frame, (left_joint_x, left_joint_y), 4, (0, 0, 255), -1)
+        cv2.circle(frame, (left_tip_x, left_tip_y), 4, (0, 165, 255), -1)
+
+        # 右アームの描画（左右対称に美しくシンメトリー描画）
+        cv2.line(frame, (right_base_x, right_base_y), (right_joint_x, right_joint_y), (0, 255, 150), 3)
+        cv2.line(frame, (right_joint_x, right_joint_y), (right_tip_x, right_tip_y), (0, 255, 150), 3)
+        cv2.circle(frame, (right_joint_x, right_joint_y), 4, (0, 0, 255), -1)
+        cv2.circle(frame, (right_tip_x, right_tip_y), 4, (0, 165, 255), -1)
+
+        # 通常の文字テキスト情報描画
         cv2.putText(frame, f"Time: {elapsed_seconds:.2f}s  Bar: {current_bar}  Step: {step_in_bar:02d}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
         cv2.putText(frame, f"Real Face     : H:{face_h:.2f} S:{face_s:.2f}",
@@ -234,11 +308,13 @@ def main():
         cv2.putText(frame, f"RuleA Predict : H:{pred_h:.2f} S:{pred_s:.2f}",
                     (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
+        # 💡 ここでOpenCVにフレームを表示（1マス戻した正しいインデント位置）
         cv2.imshow('Windows OpenCV AI System', frame)
 
         if cv2.waitKey(5) & 0xFF == ord('q'):
             break
 
+        # 💡 ここからは while ループの外側の処理（インデントなし）
     pygame.mixer.music.stop()
     data_mgr.close()
     hw_mgr.close()
