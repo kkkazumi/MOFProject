@@ -15,7 +15,7 @@ from train import background_train_loop
 
 
 def main():
-    data_mgr = MusicDatasetManager(midi_file="yorokobi.mid")
+    data_mgr = MusicDatasetManager(midi_file="gavotte.mid")  # お使いの楽曲名に合わせて適宜変更してください
     hw_mgr = HardwareManager(arduino_port="COM3")
 
     # Pygameオーディオミキサーの初期化
@@ -41,7 +41,7 @@ def main():
     model = EmotionPredictionLSTM(input_dim=5, hidden_dim=16, output_dim=2)
     model.eval()
 
-    # 💡 過去の学習データファイル（best_model.pth）が存在していれば最初にロード
+    # 過去の学習データファイル（best_model.pth）が存在していれば最初にロード
     model_path = "best_model.pth"
     last_model_mtime = 0.0
     if os.path.exists(model_path):
@@ -52,12 +52,15 @@ def main():
         except Exception as e:
             print(f"【警告】モデルファイルのロードに失敗しました（初期状態で起動します）: {e}")
 
-    # 💡 【完全自動化】バックグラウンド学習スレッド（別スレッド）を起動
-    # daemon=True にすることで、main.py終了時に自動的に学習スレッドも停止します。
-    train_thread = threading.Thread(target=background_train_loop, daemon=True)
+    # 動的に現在書き込み中のCSVパスを学習ループに引き渡す
+    train_thread = threading.Thread(
+        target=background_train_loop,
+        kwargs={"csv_path": data_mgr.csv_file},
+        daemon=True
+    )
     train_thread.start()
 
-    # 💡 リアルタイム軌道最適化インスタンスを生成
+    # リアルタイム軌道最適化インスタンスを生成
     trajectory_optimizer = ArmTrajectoryOptimizer(model, num_candidates=30)
     print("【成功】リアルタイムAI最適化システムを初期化しました。")
 
@@ -68,7 +71,7 @@ def main():
     predicted_emotions = np.array([0.25, 0.25])
 
     # ----------------------------------------------------
-    # 曲本来のBPMと「本物の拍数」を自動抽出する
+    # 💡 【修正】曲本来のBPMと「本物の拍数」を配列エラーなく安全に抽出
     # ----------------------------------------------------
     bpm = 120.0
     beats_per_bar = 4.0  # 初期フォールバック値
@@ -77,6 +80,7 @@ def main():
         pm = pretty_midi.PrettyMIDI(data_mgr.midi_file)
         tempo_change_times, tempi = pm.get_tempo_changes()
         if len(tempi) > 0:
+            # 配列の一番最初の要素をピンポイントで取り出すことで scalar キャストエラーを防ぐ
             bpm = float(tempi[0])
         else:
             bpm = float(pm.estimate_tempo())
@@ -145,45 +149,37 @@ def main():
         # 表の処理：現在のフレームから顔の数値を解析
         current_face_vector = hw_mgr.analyze_face(frame)
 
-        # 💡 【自動リロード機構】裏で train.py がモデルを更新したかを毎フレーム安全にチェック
+        # 【自動リロード機構】裏で train.py がモデルを更新したかを毎フレーム安全にチェック
         if os.path.exists(model_path):
             try:
                 current_mtime = os.path.getmtime(model_path)
                 if current_mtime > last_model_mtime:
-                    # 裏での書き込み完了を少し待つための微小なセーフティ
                     time.sleep(0.05)
                     model.load_state_dict(torch.load(model_path))
                     model.eval()
                     last_model_mtime = current_mtime
                     print("\n🔄 [Main System] 最新の学習済みAIモデルをバックグラウンドから自動リロードしました！")
             except Exception:
-                # 書き込み中のタイミング競合などでエラーが出た場合は、クラッシュさせず次フレームで安全に再トライ
                 pass
 
         # 1小節ごとの一括制御情報の送信
         if current_bar != last_print_bar:
             last_print_bar = current_bar
 
-            # 未来予測の角度列を毎ステップでサンプリング決定していくため、
-            # 小節頭ではベース軌道のバッファを初期化、または一時ダミー生成します
-            # ここでは便宜上、最適化エンジンを使って1小節分の先行計画の枠組として利用
             flat_trajectory_str = ",".join([str(int(90)) for a in range(steps_per_bar * 4)]) + "\n"
             if hw_mgr.ser:
                 hw_mgr.ser.write(flat_trajectory_str.encode('utf-8'))
 
             print(f"⏱️ [{elapsed_seconds:6.2f}s] 🔁 【 第 {current_bar:2d} 小節 制御開始 】 🤖")
 
-        # 💡 ステップ毎の、AIモデルによる「最高表情角度」のリアルタイム選別と適用
+        # ステップ毎の、AIモデルによる「最高表情角度」のリアルタイム選別と適用
         if total_current_step != last_record_step:
             last_record_step = total_current_step
 
-            # 💡 数式ではなく、optimizer.pyを使って次の「ベストな角度4軸」をランダムサンプリング探索！
+            # optimizer.pyを使って次の「ベストな角度4軸」をランダムサンプリング探索
             step_angles = trajectory_optimizer.select_best_angles(
                 current_music_token, music_buffer, arm_angles_buffer
             )
-
-            # リアルタイムでサーボへの追加指令を必要とする場合は、ここで直接1ステップ分の追加シリアル送信も可能
-            # 例: hw_mgr.send_single_step(step_angles)
 
             # バッファの更新
             music_buffer = np.roll(music_buffer, -1, axis=0)
@@ -198,24 +194,42 @@ def main():
                 predicted_tensor = model(input_tensor)
                 predicted_emotions = predicted_tensor.squeeze(0).numpy()
 
-            # 新鮮なデータをCSVへと自動蓄積（これを裏で train.py が吸い上げる）
+            # 新鮮なデータをCSVへと自動蓄積
             data_mgr.write_row(current_bar, current_music_token, step_angles, current_face_vector)
 
-        # 画面テキストの安全な描画
-        try:
-            face_h = float(current_face_vector[0]) if hasattr(current_face_vector, '__len__') else float(
-                current_face_vector)
-            face_s = float(current_face_vector[1]) if hasattr(current_face_vector, '__len__') and len(
-                current_face_vector) > 1 else 0.0
-        except (TypeError, IndexError):
-            face_h = float(current_face_vector) if current_face_vector is not None else 0.0
-            face_s = 0.0
+            # 安全に即座にファイルへ物理保存を行う（フラッシュ処理）
+            try:
+                for attr_name in dir(data_mgr):
+                    attr = getattr(data_mgr, attr_name)
+                    if hasattr(attr, 'flush') and not isinstance(attr, str):
+                        attr.flush()
+            except Exception:
+                pass
+
+        # 💡 【修正】複数要素の配列（配列・リスト・タプル）からインデックスで安全に抽出して描画
+        face_h, face_s = 0.0, 0.0
+        if current_face_vector is not None:
+            try:
+                # 配列やリストとしてインデックスアクセスを試みる
+                face_h = float(current_face_vector[0])
+                if len(current_face_vector) > 1:
+                    face_s = float(current_face_vector[1])
+            except (TypeError, IndexError, KeyError):
+                # 単一の数値だった場合のフォールバック
+                try:
+                    face_h = float(current_face_vector)
+                except Exception:
+                    pass
 
         cv2.putText(frame, f"Time: {elapsed_seconds:.2f}s  Bar: {current_bar}  Step: {step_in_bar:02d}",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
         cv2.putText(frame, f"Real Face     : H:{face_h:.2f} S:{face_s:.2f}",
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-        cv2.putText(frame, f"RuleA Predict : H:{float(predicted_emotions[0]):.2f} S:{float(predicted_emotions[1]):.2f}",
+
+        # モデル予測値（2次元配列想定）の安全な取り出し
+        pred_h = float(predicted_emotions[0]) if len(predicted_emotions) > 0 else 0.0
+        pred_s = float(predicted_emotions[1]) if len(predicted_emotions) > 1 else 0.0
+        cv2.putText(frame, f"RuleA Predict : H:{pred_h:.2f} S:{pred_s:.2f}",
                     (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
         cv2.imshow('Windows OpenCV AI System', frame)
