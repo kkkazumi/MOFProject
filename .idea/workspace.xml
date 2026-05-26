@@ -4,11 +4,11 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="f58677c7-65c0-466d-8d45-2bfdb8f634b9" name="Changes" comment="commit, learning and visualizing mode">
-      <change afterPath="$PROJECT_DIR$/pretrain.py" afterDir="false" />
+    <list default="true" id="f58677c7-65c0-466d-8d45-2bfdb8f634b9" name="Changes" comment="みみずの体操状態">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/dataset.py" beforeDir="false" afterPath="$PROJECT_DIR$/dataset.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/main.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/optimizer.py" beforeDir="false" afterPath="$PROJECT_DIR$/optimizer.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/train.py" beforeDir="false" afterPath="$PROJECT_DIR$/train.py" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -170,7 +170,15 @@
       <option name="project" value="LOCAL" />
       <updated>1779789338486</updated>
     </task>
-    <option name="localTasksCounter" value="10" />
+    <task id="LOCAL-00010" summary="みみずの体操状態">
+      <option name="closed" value="true" />
+      <created>1779790337077</created>
+      <option name="number" value="00010" />
+      <option name="presentableId" value="LOCAL-00010" />
+      <option name="project" value="LOCAL" />
+      <updated>1779790337077</updated>
+    </task>
+    <option name="localTasksCounter" value="11" />
     <servers />
   </component>
   <component name="Vcs.Log.Tabs.Properties">
@@ -203,6 +211,7 @@
     <MESSAGE value="changed the way of vectorizing" />
     <MESSAGE value="いったん動くようになったビジュアライズも。みみずの運動みたいでこわいけど" />
     <MESSAGE value="commit, learning and visualizing mode" />
-    <option name="LAST_COMMIT_MESSAGE" value="commit, learning and visualizing mode" />
+    <MESSAGE value="みみずの体操状態" />
+    <option name="LAST_COMMIT_MESSAGE" value="みみずの体操状態" />
   </component>
 </project>
