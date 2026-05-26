@@ -67,4 +67,65 @@ class MusicDatasetManager:
     def close(self):
         if self.csv_f:
             self.csv_f.close()
-n
+
+    def extract_bar_features(self, current_bar, seconds_per_bar):
+        """
+        指定された小節の『リズム情報（8分音符刻み: 8次元）』と『コード情報（12音階: 12次元）』を
+        時系列や和音の文脈を壊さずに計20次元のベクトルとして抽出する。
+        """
+        import pretty_midi
+        import numpy as np
+
+        # 1. 音楽のコード情報（12次元クロマベクトル）の初期化
+        # [C, C#, D, D#, E, F, F#, G, G#, A, A#, B] の12音階の強さ
+        chroma_vector = np.zeros(12, dtype=np.float32)
+
+        # 2. 音楽のリズム情報（8分音符刻みの発音フラグ: 8次元）の初期化
+        # 4分音符が4つの4拍子（1小節）を8等分して、音が新しく鳴ったタイミングを 1 / 0 で記録
+        rhythm_vector = np.zeros(8, dtype=np.float32)
+
+        try:
+            # 現在の小節の開始時間と終了時間を秒数で計算
+            # current_bar は 1 から始まるため、時間を 0 スタートに補正
+            bar_start_time = (current_bar - 1) * seconds_per_bar
+            bar_end_time = current_bar * seconds_per_bar
+
+            # pretty_midiオブジェクトを再ロード（または事前に保持しているものを使用）
+            pm = pretty_midi.PrettyMIDI(self.midi_file)
+
+            # --- ① コード（和音）情報の抽出 ---
+            # 指定した小節の区間だけを対象に、鳴っている音の成分（クロマベクトル）を取得
+            # get_chromaのサンプリング周波数を指定し、時間区間でスライス
+            chroma = pm.get_chroma(fs=10)
+            times = np.linspace(0, pm.get_end_time(), chroma.shape[1])
+
+            # 現在の小節区間に入っているサンプルのインデックスを取得
+            bar_indices = np.where((times >= bar_start_time) & (times <= bar_end_time))[0]
+            if len(bar_indices) > 0:
+                # 区間内の音の強さを平均して12次元ベクトルにする
+                chroma_vector = np.mean(chroma[:, bar_indices], axis=1).astype(np.float32)
+                # 最大値が 1.0 になるように正規化（AIが学習しやすくするため）
+                if np.max(chroma_vector) > 0:
+                    chroma_vector = chroma_vector / np.max(chroma_vector)
+
+            # --- ② 時系列（リズム）情報の抽出 ---
+            step_duration = seconds_per_bar / 8.0  # 1小節を8等分（8分音符の長さ）
+
+            for instrument in pm.instruments:
+                if instrument.is_drum:
+                    continue  # ドラム以外（メロディや伴奏）の発音タイミングを重視
+
+                for note in instrument.notes:
+                    # 音が鳴り始めたタイミング（Note On）がこの小節内にあるかチェック
+                    if bar_start_time <= note.start < bar_end_time:
+                        # 小節内のどこ（0〜7番目のグリッド）で鳴ったかを計算
+                        relative_time = note.start - bar_start_time
+                        grid_idx = int(relative_time // step_duration)
+                        if 0 <= grid_idx < 8:
+                            rhythm_vector[grid_idx] = 1.0  # 発音ありフラグを立てる
+
+        except Exception as e:
+            print(f"⚠️ [MusicDatasetManager] 1小節ベクトルの抽出に失敗しました: {e}")
+
+        # 12次元（コード）と 8次元（リズム）をドッキングさせて20次元ベクトルとして返す
+        return np.concatenate([chroma_vector, rhythm_vector])

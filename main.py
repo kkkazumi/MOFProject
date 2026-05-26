@@ -15,7 +15,7 @@ from train import background_train_loop
 
 
 def main():
-    data_mgr = MusicDatasetManager(midi_file="gavotte.mid")  # お使いの楽曲名に合わせて適宜変更してください
+    data_mgr = MusicDatasetManager(midi_file="gavotte.mid")
     hw_mgr = HardwareManager(arduino_port="COM3")
 
     # Pygameオーディオミキサーの初期化
@@ -35,6 +35,8 @@ def main():
 
     hw_mgr.init_arduino()
     hw_mgr.init_camera()
+
+    # dataset.py で設定された training_data.csv がここで開かれます
     data_mgr.init_csv_writer()
 
     # 入力: トークン(1) + 角度(4) = 5次元 / 出力: 表情H, S = 2次元
@@ -52,10 +54,10 @@ def main():
         except Exception as e:
             print(f"【警告】モデルファイルのロードに失敗しました（初期状態で起動します）: {e}")
 
-    # 動的に現在書き込み中のCSVパスを学習ループに引き渡す
+    # 【確定】dataset.pyが使う「training_data.csv」を裏の学習側に直接指定して繋ぐ
     train_thread = threading.Thread(
         target=background_train_loop,
-        kwargs={"csv_path": data_mgr.csv_file},
+        kwargs={"csv_path": "training_data.csv"},
         daemon=True
     )
     train_thread.start()
@@ -70,9 +72,7 @@ def main():
     arm_angles_buffer = np.zeros((history_steps, 4))
     predicted_emotions = np.array([0.25, 0.25])
 
-    # ----------------------------------------------------
-    # 💡 【修正】曲本来のBPMと「本物の拍数」を配列エラーなく安全に抽出
-    # ----------------------------------------------------
+    # 曲本来のBPMと「本物の拍数」を配列エラーなく安全に抽出
     bpm = 120.0
     beats_per_bar = 4.0  # 初期フォールバック値
 
@@ -80,7 +80,6 @@ def main():
         pm = pretty_midi.PrettyMIDI(data_mgr.midi_file)
         tempo_change_times, tempi = pm.get_tempo_changes()
         if len(tempi) > 0:
-            # 配列の一番最初の要素をピンポイントで取り出すことで scalar キャストエラーを防ぐ
             bpm = float(tempi[0])
         else:
             bpm = float(pm.estimate_tempo())
@@ -206,16 +205,19 @@ def main():
             except Exception:
                 pass
 
-        # 💡 【修正】複数要素の配列（配列・リスト・タプル）からインデックスで安全に抽出して描画
+            # 💡 【追加】AIがどれくらいの予測スコアで角度を選んだかコンソールに表示
+            score = float(predicted_emotions[0] + predicted_emotions[1]) if len(predicted_emotions) > 1 else float(
+                predicted_emotions[0])
+            print(f"   🎯 [AI選択値] 予測感情スコア(H+S): {score:.4f} ➡️ 決定角度: {step_angles}")
+
+        # 複数要素の配列からインデックスで安全に抽出して描画
         face_h, face_s = 0.0, 0.0
         if current_face_vector is not None:
             try:
-                # 配列やリストとしてインデックスアクセスを試みる
                 face_h = float(current_face_vector[0])
                 if len(current_face_vector) > 1:
                     face_s = float(current_face_vector[1])
             except (TypeError, IndexError, KeyError):
-                # 単一の数値だった場合のフォールバック
                 try:
                     face_h = float(current_face_vector)
                 except Exception:
@@ -226,7 +228,7 @@ def main():
         cv2.putText(frame, f"Real Face     : H:{face_h:.2f} S:{face_s:.2f}",
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
-        # モデル予測値（2次元配列想定）の安全な取り出し
+        # モデル予測値の安全な取り出し
         pred_h = float(predicted_emotions[0]) if len(predicted_emotions) > 0 else 0.0
         pred_s = float(predicted_emotions[1]) if len(predicted_emotions) > 1 else 0.0
         cv2.putText(frame, f"RuleA Predict : H:{pred_h:.2f} S:{pred_s:.2f}",
