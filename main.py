@@ -91,6 +91,7 @@ def main():
         traceback.print_exc()
         return
 
+
     try:
         pygame.mixer.music.load(data_mgr.midi_file)
         print(f"【成功】pygameに {data_mgr.midi_file} を読み込みました。")
